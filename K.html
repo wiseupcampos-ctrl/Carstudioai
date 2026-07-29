@@ -1,0 +1,303 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>Car Studio AI - Compact 3:4</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/interactjs/dist/interact.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+  <style>
+    * { box-sizing: border-box; }
+    body { touch-action: manipulation; background-color: #030712; height: 100vh; overflow: hidden; }
+    .glass { background: rgba(15, 23, 42, 0.95); backdrop-filter: blur(12px); border: 1px solid rgba(255, 255, 255, 0.1); }
+    
+    .aspect-3-4 { aspect-ratio: 3 / 4; }
+
+    .manipulatable {
+      position: absolute;
+      touch-action: none;
+      user-select: none;
+      transform-origin: center center;
+    }
+
+    #bgManipulator { z-index: 10; width: 100%; height: 100%; object-fit: cover; }
+    #carManipulator { z-index: 30; width: 100%; height: 100%; object-fit: contain; object-position: bottom; }
+    .active-control { outline: 2px dashed #f43f5e; outline-offset: -2px; }
+
+    #carShadow {
+      position: absolute; bottom: 8%; left: 10%; width: 80%; height: 20px;
+      background: radial-gradient(ellipse at center, rgba(0,0,0,0.85) 0%, rgba(0,0,0,0.3) 55%, rgba(0,0,0,0) 75%);
+      border-radius: 100%; filter: blur(5px); z-index: 20; pointer-events: none;
+    }
+
+    input[type=range] { accent-color: #f43f5e; }
+    .tab-active { background-color: #f43f5e !important; color: #ffffff !important; }
+  </style>
+</head>
+<body class="text-slate-100 h-screen flex flex-col font-sans p-2 justify-between">
+
+  <!-- Header Fixo Compacto -->
+  <header class="p-2 rounded-xl border border-slate-800 flex justify-between items-center glass shrink-0">
+    <div class="flex items-center gap-2">
+      <span class="text-lg">🚗</span>
+      <h1 class="font-bold text-xs text-rose-400">Car Studio AI <span class="text-[9px] text-slate-400 font-normal">3:4</span></h1>
+    </div>
+    <button onclick="toggleConfig()" class="text-[10px] bg-slate-800 text-slate-300 px-2.5 py-1 rounded-lg border border-slate-700">⚙️ API</button>
+  </header>
+
+  <!-- Modal API Config -->
+  <div id="apiModal" class="hidden absolute top-12 left-2 right-2 z-50 glass p-3 rounded-xl flex flex-col gap-2 border border-rose-500/30">
+    <h3 class="font-semibold text-xs text-rose-300">Chave API Photoroom</h3>
+    <input type="password" id="apiKeyInput" placeholder="Ex: photoroom_xxxxxxx" class="bg-slate-900 border border-slate-700 text-xs p-2 rounded-lg w-full text-white focus:outline-none" />
+    <button onclick="saveApiKey()" class="bg-rose-600 text-xs py-1.5 rounded-lg font-medium">Salvar Chave</button>
+  </div>
+
+  <!-- Canvas Principal 3:4 Resizing para Tela -->
+  <div class="relative w-full aspect-3-4 max-h-[42vh] mx-auto bg-slate-900 rounded-xl overflow-hidden border border-slate-700 shadow-xl shrink-0 my-1" id="canvasContainer">
+    <img id="bgManipulator" src="https://i.imgur.com/vHqLd6z.png" class="manipulatable" alt="Cenário Fundo" data-x="0" data-y="0" data-scale="1" data-angle="0" />
+    <div id="carShadow" class="hidden"></div>
+    <img id="carManipulator" src="" class="manipulatable hidden" alt="Veículo" data-x="0" data-y="0" data-scale="1" data-angle="0" />
+
+    <div id="placeholderText" class="absolute inset-0 z-40 flex flex-col items-center justify-center text-center p-2 bg-slate-950/80 backdrop-blur-sm">
+      <span class="text-xl mb-1">📸</span>
+      <p class="text-xs font-semibold text-slate-100">Sem Imagem do Veículo</p>
+      <p class="text-[10px] text-slate-400">Use as opções abaixo para carregar</p>
+    </div>
+    
+    <div id="loadingOverlay" class="hidden absolute inset-0 bg-slate-950/90 backdrop-blur-md z-50 flex flex-col items-center justify-center gap-1">
+      <div class="w-6 h-6 border-2 border-rose-500 border-t-transparent rounded-full animate-spin"></div>
+      <p class="text-[10px] font-medium text-rose-400">Removendo fundo...</p>
+    </div>
+  </div>
+
+  <!-- Painel Único de Controle e Ações -->
+  <div class="glass p-2 rounded-xl flex flex-col gap-2 border border-slate-800 shrink-0">
+    
+    <!-- Navegação de Abas Internas -->
+    <div class="flex items-center justify-between border-b border-slate-800 pb-1.5">
+      <div class="flex gap-1 bg-slate-900 p-0.5 rounded-lg border border-slate-800">
+        <button onclick="setMainTab('edit')" id="tabEdit" class="text-[10px] px-2.5 py-1 rounded-md font-semibold tab-active">🎛️ Ajustes</button>
+        <button onclick="setMainTab('files')" id="tabFiles" class="text-[10px] px-2.5 py-1 rounded-md font-semibold text-slate-400">📁 Fotos / Salvar</button>
+      </div>
+
+      <div class="flex gap-1 bg-slate-900 p-0.5 rounded-lg border border-slate-800">
+        <button onclick="setActiveTarget('car')" id="tabCar" class="text-[10px] px-2 py-0.5 rounded font-medium text-rose-400">🚗 Carro</button>
+        <button onclick="setActiveTarget('bg')" id="tabBg" class="text-[10px] px-2 py-0.5 rounded font-medium text-slate-400">🖼️ Fundo</button>
+      </div>
+    </div>
+
+    <!-- CONTEÚDO DA ABA 1: AJUSTES -->
+    <div id="panelEdit" class="flex flex-col gap-1.5">
+      <div class="grid grid-cols-2 gap-x-2 gap-y-1 text-[10px]">
+        <div>
+          <div class="flex justify-between text-slate-300"><span>Zoom</span><span id="valScale">100%</span></div>
+          <input type="range" id="sliderScale" min="20" max="300" value="100" oninput="onTransformSliderChange()" />
+        </div>
+        <div>
+          <div class="flex justify-between text-slate-300"><span>Girar</span><span id="valAngle">0°</span></div>
+          <input type="range" id="sliderAngle" min="-180" max="180" value="0" oninput="onTransformSliderChange()" />
+        </div>
+        <div>
+          <div class="flex justify-between text-slate-300"><span>Luz/Brilho</span><span id="valBrightness">100%</span></div>
+          <input type="range" id="sliderBrightness" min="30" max="170" value="100" oninput="onFilterSliderChange()" />
+        </div>
+        <div>
+          <div class="flex justify-between text-slate-300"><span>Blur/Foco</span><span id="valBlur">0px</span></div>
+          <input type="range" id="sliderBlur" min="0" max="10" value="0" step="0.5" oninput="onFilterSliderChange()" />
+        </div>
+      </div>
+    </div>
+
+    <!-- CONTEÚDO DA ABA 2: UPLOAD E SALVAR -->
+    <div id="panelFiles" class="hidden flex-col gap-2">
+      <div class="grid grid-cols-2 gap-2">
+        <label class="flex items-center justify-center gap-1 p-2 bg-rose-600 hover:bg-rose-500 text-white rounded-lg cursor-pointer text-[10px] font-semibold">
+          📷 Carregar Carro
+          <input type="file" accept="image/*" onchange="handleCarUpload(event)" class="hidden" />
+        </label>
+        <label class="flex items-center justify-center gap-1 p-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg cursor-pointer text-[10px] font-semibold">
+          🖼️ Trocar Fundo
+          <input type="file" accept="image/*" onchange="handleBgUploadManual(event)" class="hidden" />
+        </label>
+      </div>
+
+      <button id="downloadBtn" onclick="saveFinalImage()" disabled class="w-full bg-emerald-600 disabled:opacity-40 hover:bg-emerald-500 text-white font-bold py-2 px-3 rounded-lg flex items-center justify-center gap-1 text-xs">
+        💾 SALVAR FOTO EM HD (3:4)
+      </button>
+    </div>
+
+  </div>
+
+  <script>
+    function toggleConfig() { document.getElementById('apiModal').classList.toggle('hidden'); }
+    function saveApiKey() {
+      const key = document.getElementById('apiKeyInput').value.trim();
+      if(key) { localStorage.setItem('photoroom_key', key); alert('Chave salva!'); toggleConfig(); }
+    }
+    const savedKey = localStorage.getItem('photoroom_key');
+    if(savedKey) document.getElementById('apiKeyInput').value = savedKey;
+
+    let activeTarget = 'car';
+    const layerStates = {
+      car: { x: 0, y: 0, scale: 1, angle: 0, brightness: 100, contrast: 100, saturate: 100, blur: 0 },
+      bg: { x: 0, y: 0, scale: 1, angle: 0, brightness: 100, contrast: 100, saturate: 100, blur: 0 }
+    };
+
+    function setMainTab(tab) {
+      document.getElementById('panelEdit').className = tab === 'edit' ? 'flex flex-col gap-1.5' : 'hidden';
+      document.getElementById('panelFiles').className = tab === 'files' ? 'flex flex-col gap-2' : 'hidden';
+      document.getElementById('tabEdit').className = tab === 'edit' ? 'text-[10px] px-2.5 py-1 rounded-md font-semibold tab-active' : 'text-[10px] px-2.5 py-1 rounded-md font-semibold text-slate-400';
+      document.getElementById('tabFiles').className = tab === 'files' ? 'text-[10px] px-2.5 py-1 rounded-md font-semibold tab-active' : 'text-[10px] px-2.5 py-1 rounded-md font-semibold text-slate-400';
+    }
+
+    function setActiveTarget(target) {
+      activeTarget = target;
+      document.getElementById('tabCar').className = target === 'car' ? 'text-[10px] px-2 py-0.5 rounded font-medium bg-rose-950 text-rose-300 border border-rose-800' : 'text-[10px] px-2 py-0.5 rounded font-medium text-slate-400';
+      document.getElementById('tabBg').className = target === 'bg' ? 'text-[10px] px-2 py-0.5 rounded font-medium bg-rose-950 text-rose-300 border border-rose-800' : 'text-[10px] px-2 py-0.5 rounded font-medium text-slate-400';
+
+      const carEl = document.getElementById('carManipulator');
+      const bgEl = document.getElementById('bgManipulator');
+      if (target === 'car') { carEl.classList.add('active-control'); bgEl.classList.remove('active-control'); } 
+      else { bgEl.classList.add('active-control'); carEl.classList.remove('active-control'); }
+      syncUIWithState();
+    }
+
+    function syncUIWithState() {
+      const state = layerStates[activeTarget];
+      document.getElementById('sliderScale').value = Math.round(state.scale * 100);
+      document.getElementById('sliderAngle').value = Math.round(state.angle);
+      document.getElementById('sliderBrightness').value = state.brightness;
+      document.getElementById('sliderBlur').value = state.blur;
+
+      document.getElementById('valScale').innerText = Math.round(state.scale * 100) + '%';
+      document.getElementById('valAngle').innerText = Math.round(state.angle) + '°';
+      document.getElementById('valBrightness').innerText = state.brightness + '%';
+      document.getElementById('valBlur').innerText = state.blur + 'px';
+    }
+
+    function onTransformSliderChange() {
+      const state = layerStates[activeTarget];
+      state.scale = document.getElementById('sliderScale').value / 100;
+      state.angle = parseFloat(document.getElementById('sliderAngle').value);
+      syncUIWithState();
+      applyTransform(activeTarget);
+    }
+
+    function onFilterSliderChange() {
+      const state = layerStates[activeTarget];
+      state.brightness = document.getElementById('sliderBrightness').value;
+      state.blur = document.getElementById('sliderBlur').value;
+      syncUIWithState();
+      applyFilters(activeTarget);
+    }
+
+    function applyTransform(targetKey) {
+      const el = targetKey === 'car' ? document.getElementById('carManipulator') : document.getElementById('bgManipulator');
+      const st = layerStates[targetKey];
+      el.style.transform = `translate(${st.x}px, ${st.y}px) scale(${st.scale}) rotate(${st.angle}deg)`;
+    }
+
+    function applyFilters(targetKey) {
+      const el = targetKey === 'car' ? document.getElementById('carManipulator') : document.getElementById('bgManipulator');
+      const st = layerStates[targetKey];
+      el.style.filter = `brightness(${st.brightness}%) blur(${st.blur}px)`;
+    }
+
+    interact('.manipulatable')
+      .draggable({
+        listeners: {
+          move(event) {
+            const targetKey = event.target.id === 'carManipulator' ? 'car' : 'bg';
+            const st = layerStates[targetKey];
+            st.x += event.dx; st.y += event.dy;
+            applyTransform(targetKey);
+          }
+        }
+      })
+      .gesturable({
+        listeners: {
+          move(event) {
+            const targetKey = event.target.id === 'carManipulator' ? 'car' : 'bg';
+            const st = layerStates[targetKey];
+            st.scale *= (1 + event.ds);
+            st.angle += event.da;
+            syncUIWithState();
+            applyTransform(targetKey);
+          }
+        }
+      });
+
+    async function handleCarUpload(event) {
+      const file = event.target.files[0];
+      if (!file) return;
+      const apiKey = localStorage.getItem('photoroom_key');
+      const car = document.getElementById('carManipulator');
+      
+      if (!apiKey) { alert("Informe a Chave de API no topo."); toggleConfig(); return; }
+
+      document.getElementById('placeholderText').classList.add('hidden');
+      document.getElementById('loadingOverlay').classList.remove('hidden');
+
+      try {
+        const formData = new FormData();
+        formData.append('image_file', file);
+        const response = await fetch('https://sdk.photoroom.com/v1/segment', {
+          method: 'POST',
+          headers: { 'x-api-key': apiKey },
+          body: formData,
+        });
+
+        if (response.ok) {
+          const blob = await response.blob();
+          car.src = URL.createObjectURL(blob);
+          car.classList.remove('hidden');
+          document.getElementById('carShadow').classList.remove('hidden');
+          document.getElementById('downloadBtn').disabled = false;
+          
+          layerStates.car = { x: 0, y: 0, scale: 1, angle: 0, brightness: 100, contrast: 100, saturate: 100, blur: 0 };
+          setActiveTarget('car');
+          applyTransform('car');
+          applyFilters('car');
+        } else { alert('Verifique sua chave de API Photoroom.'); }
+      } catch (err) { alert('Erro: ' + err.message); } 
+      finally { document.getElementById('loadingOverlay').classList.add('hidden'); }
+    }
+
+    function handleBgUploadManual(event) {
+      const file = event.target.files[0];
+      if (!file) return;
+      const bg = document.getElementById('bgManipulator');
+      bg.src = URL.createObjectURL(file);
+      layerStates.bg = { x: 0, y: 0, scale: 1, angle: 0, brightness: 100, contrast: 100, saturate: 100, blur: 0 };
+      setActiveTarget('bg');
+      applyTransform('bg');
+      applyFilters('bg');
+    }
+
+    async function saveFinalImage() {
+      const btn = document.getElementById('downloadBtn');
+      btn.innerText = "⏳ Gerando Foto HD...";
+      btn.disabled = true;
+
+      document.querySelectorAll('.manipulatable').forEach(el => el.classList.remove('active-control'));
+      const container = document.getElementById('canvasContainer');
+
+      try {
+        const canvas = await html2canvas(container, { scale: 3, useCORS: true, allowTaint: true });
+        const link = document.createElement('a');
+        link.download = 'carro-estudio-hd.png';
+        link.href = canvas.toDataURL('image/png');
+        link.click();
+      } catch (e) { alert("Erro ao gerar foto: " + e.message); } 
+      finally {
+        btn.innerText = "💾 SALVAR FOTO EM HD (3:4)";
+        btn.disabled = false;
+        setActiveTarget(activeTarget);
+      }
+    }
+
+    setActiveTarget('car');
+  </script>
+</body>
+</html>
